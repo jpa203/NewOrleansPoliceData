@@ -1,0 +1,569 @@
+---
+title: "New Orleans Police Data"
+author: "Jean Paul Azzopardi"
+date: "2022-9-25"
+output:
+  html_document:
+    toc: true
+    toc_float : true
+    theme: yeti
+    highlight : tango
+---
+
+
+```{r message=FALSE, include=FALSE, results= FALSE}
+library(dplyr)
+library(lubridate)
+library(tidyverse)
+library(visdat)
+library(leaflet)
+library(plotly)
+library(zoo)
+library(sampling)
+
+
+#loading data set
+
+df <- list.files(path = "/Users/jazzopardi/Desktop/R/Police Data", pattern = "*.csv") %>% 
+  lapply(read_csv, col_types = c(Zip = "character")) %>% 
+  bind_rows                                                      
+
+
+#checking for n/a values
+
+anyNA(df) # double checking for NA values
+
+df[df ==""] <- NA
+
+# data - Time Dispatch, Time Arrive
+
+x <- df
+
+x <- x$TypeText[is.na(x$TimeArrive)]
+
+x <- sort(table(x), decreasing = TRUE)[1:5]
+
+x <- as.data.frame(x)
+
+df$TimeArrive <- parse_date_time(df$TimeArrive, c('mdy HMSp', 'mdy HM'))
+
+df$TimeClosed <- parse_date_time(df$TimeClosed, c('mdy HMSp', 'mdy HM'))
+
+df$TimeCreate <- parse_date_time(df$TimeCreate, c('mdy HMSp', 'mdy HM'))
+
+df$TimeDispatch <- parse_date_time(df$TimeDispatch, c('mdy HMSp', 'mdy HM'))
+
+df$Type <- NULL
+
+df$Type_ <- NULL
+
+df$Priority <- NULL
+
+df$InitialType <- NULL
+
+df$InitialPriority <- NULL
+
+df$Beat <- NULL
+
+df['ResponseTime'] <- df$TimeArrive - df$TimeDispatch
+
+df <- df[df$ResponseTime > 0, ]
+
+df <- na.omit(df)
+
+df <- df[!(df$Disposition == '-13'), ]
+
+police_2017 <- df[df$TimeCreate >= '2017-01-01 00:00:00' & df$TimeCreate <= '2017-12-31 11:59:59',  ]
+police_2018 <- df[df$TimeCreate >= '2018-01-01 00:00:00' & df$TimeCreate <= '2018-12-31 11:59:59',  ]
+police_2019 <- df[df$TimeCreate >= '2019-01-01 00:00:00' & df$TimeCreate <= '2019-12-31 11:59:59',  ]
+police_2020 <- df[df$TimeCreate >= '2020-01-01 00:00:00' & df$TimeCreate <= '2020-12-31 11:59:59',  ]
+police_2021 <- df[df$TimeCreate >= '2021-01-01 00:00:00' & df$TimeCreate <= '2021-12-31 11:59:59',  ]
+police_2022 <- df[df$TimeCreate >= '2022-01-01 00:00:00' & df$TimeCreate <= '2022-12-31 11:59:59',  ]
+ 
+```
+
+# Data Overview
+
+This data set concerns service calls made to the New Orleans Police Department from 2017 to 2022. It was obtained by the City Of New Orleans Open Data website at data.nola.gov. 
+
+This data set contains over 2.5 million entries, each representing a call made to the NOPD across the five years. This data set also contains 24 variables/columns.
+
+The focus of this analysis is to gauge how response times to 911 calls have changed over the years, what type of calls police are responding to and whether certain type of calls elicit longer response times.
+
+A five year window was chosen to better understand any emerging patterns.
+
+# Data Preparation 
+
+The data was imported and cleaned so that any blank cells would be replaced with NA values. The majority of missing values came from the 'Time Dispatch' and 'Time Arrive' columns. 
+
+Upon examining the data, it was evident that the time variables were read as 'characters' and not in a date/time (POSIX) format. The lubridate package was used to convert these variables into the right format for analysis. 
+
+In order to calculate the response time, a new variable - 'Response Time' - was added to the data set by way of subtracting 'TimeArrive' with 'TimeDispatch.'
+
+One challenge was figuring out how to deal with NA values. One method would be to use the zoo package and use na.aggregate to replace the NAs in each column with the mean. However, we're dealing with date/time variables here, and using this method can really manipulate our data in ways that just do not work.
+
+After deliberation, the best approach here would be to omit any NA values with date/time variables. Given that this largely concerns Time Dispatch and Time Arrive, the na.omit() operator will be used.
+
+This brought down the size of the data set by ~ one million records. 
+
+After preprocessing, the data set was trimmed down to 1198283 rows.
+
+# Viusalizing NA Values
+
+Below is a visual representation of the distribution of NA values according to Disposition types.
+
+
+```{r,echo= FALSE, warning=FALSE, message=FALSE}
+plot_ly(x, x = ~x, y = ~Freq, type = 'bar', marker = list(color = 'rgb(100, 100, 6)',line = list(color = 'rgb(8,48,107)', width = 1.5 )))%>%
+  layout(xaxis = list(title = 'Call Types'), yaxis = list(title = 'Number of NAs'))
+
+```
+
+'Complaint Other' had the highest amount of NA values. Further analysis indicated that showed that these calls concerned sexual abuse/harassment cases. It is reasonable to assume  these cases were labelled as 'other' due to their sensitive nature and to protect the identity of those involved. 
+
+# Exploratory Analysis
+
+Below is a visualization of the distribution of Response Time data across five years. We can see that the data is right skewed and outliers exist. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+new_value <- srswor(500, nrow(police_2017))
+
+new_value_two <- srswor(500, nrow(police_2018))
+
+new_value_three <- srswor(500, nrow(police_2019))
+
+new_value_four <- srswor(500, nrow(police_2020))
+
+new_value_five <- srswor(500, nrow(police_2021))
+
+new_value_six <- srswor(500, nrow(police_2022))
+
+sample <- police_2017[new_value != 0, ]
+
+sample_two <- police_2018[new_value_two != 0, ]
+
+sample_three <- police_2019[new_value_three != 0, ]
+
+sample_four <- police_2020[new_value_four != 0, ]
+
+sample_five <- police_2021[new_value_five != 0, ]
+
+sample_six <- police_2022[new_value_six != 0, ]
+
+sample$ResponseTime <- sample$ResponseTime / 60
+
+sample_two$ResponseTime <- sample_two$ResponseTime / 60
+
+sample_two$ResponseTime <- sample_two$ResponseTime / 60
+
+sample_three$ResponseTime <- sample_three$ResponseTime / 60
+
+sample_four$ResponseTime <- sample_four$ResponseTime / 60
+
+sample_five$ResponseTime <- sample_five$ResponseTime / 60
+
+sample_six$ResponseTime <- sample_six$ResponseTime / 60
+
+fig <- plot_ly(sample, x = ~ResponseTime, type = 'histogram', name = '2017')
+fig <- fig %>% add_histogram(sample_two$ResponseTime, name = '2018')
+fig <- fig %>% add_histogram(sample_three$ResponseTime, name = '2019')
+fig <- fig %>% add_histogram(sample_four$ResponseTime, name = '2020')
+fig <- fig %>% add_histogram(sample_five$ResponseTime, name = '2021')
+fig <- fig %>% add_histogram(sample_six$ResponseTime, name = '2022')
+fig <- fig %>% layout(barmode = "overlay", xaxis = list(range=c(0,100)))
+
+fig
+```
+
+# Central Limit Theorem 
+
+To better understand the distribution of this data, different samples  were taken and the mean and standard deviation of each sample calculated.
+
+The sample means is visualized in histograms according to different sample sizes. As the sample sizes increase, the mean of the sample means trends toward a normal distribution.
+
+This is also known as the Central Limit Theorem. Because of this analysis, we can conclude that our data is normally distributed. 
+
+```{r, echo = FALSE, message = FALSE, warning= FALSE}
+ctr <- table(df$ResponseTime)
+
+ctr <- as.data.frame(ctr)
+
+ctr <- ctr %>% arrange(desc(Freq))
+
+
+# 1
+samples <- 150000
+sample.size <- 2000
+
+xbar <- numeric(samples)
+
+for (i in 1: samples){
+  xbar[i] <- mean(sample(ctr$Freq, sample.size, replace = FALSE))
+  
+}
+
+xbar <- as.data.frame(xbar)
+
+#2
+
+sample.size2 <- 5000
+
+xbar2 <- numeric(samples)
+
+for (i in 1: samples){
+  xbar2[i] <- mean(sample(ctr$Freq, sample.size2, replace = FALSE))
+  
+}
+
+xbar2 <- as.data.frame(xbar2)
+
+#3
+
+sample.size3 <- 7500
+
+xbar3 <- numeric(samples)
+
+for (i in 1: samples){
+  xbar3[i] <- mean(sample(ctr$Freq, sample.size3, replace = FALSE))
+  
+}
+
+xbar3 <- as.data.frame(xbar3)
+
+#4
+
+sample.size4 <- 5000
+
+xbar4 <- numeric(samples)
+
+for (i in 1: samples){
+  xbar4[i] <- mean(sample(ctr$Freq, sample.size4, replace = FALSE))
+  
+}
+
+xbar4 <- as.data.frame(xbar4)
+
+fig <- plot_ly(alpha = 0.6)
+
+
+fig <- fig %>% add_histogram(x = xbar$xbar, name = 2500)
+fig <- fig %>% add_histogram(x = xbar2$xbar2, name = 5000)
+fig <- fig %>% add_histogram(x = xbar3$xbar3, name = 7500)
+fig <- fig %>% add_histogram(x = xbar4$xbar4, name = 5000)
+fig <- fig %>% layout(xaxis = list(title = 'Central Limit Theorem'), 
+                      barmode = 'stack')
+
+fig
+```
+
+# Response Times
+
+It is important to gauge how response times have changed over the five years and what calls elicit the longest response time from police. 
+
+We see that 'Reports To Follow' had the longest response time in 2017, 2018 and 2019. In 2021, the NOPD took the longest to respond to reports later labelled as 'False Alarms' and in 2022 this was replaced by 'Related Incident Disposition.'
+
+The most important feature here is 'Necessary Action Taken'. The time it took for NOPD to react to NAT cases more than doubled from 2017 to 2022, with the data gathered so far. 
+
+The graphs below show the top five longest response times from year to year.
+
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+# what is the response time to a service call?
+
+
+df_17 <- police_2017 %>%
+  filter(!(Disposition == 'None'))%>%
+  group_by(Disposition)%>%
+  dplyr::summarise(avg_res = mean(ResponseTime))%>%
+  head(6)
+ 
+df_17$avg_res <- round(as.numeric(df_17$avg_res/60),2)
+
+df_17$Disposition <- factor(
+  df_17$Disposition, levels = 
+    df_17$Disposition[order(df_17$avg_res, decreasing = TRUE)])
+
+
+df_17_plt <- plot_ly(df_17, x = df_17$Disposition, y = df_17$avg_res, name = '2017',
+                     marker = list(color = 'rgb(214, 55, 6)',
+                                   line = list(color = 'rgb(8,48,107)',
+                                               width = 1.5)))
+df_18 <- police_2018 %>%
+  filter(!(Disposition == 'None'))%>%
+  group_by(Disposition)%>%
+  dplyr::summarise(avg_res = mean(ResponseTime))%>%
+  head(6)
+ 
+df_18$avg_res <- round(as.numeric(df_18$avg_res/60),2)
+
+df_18$Disposition <- factor(
+  df_18$Disposition, levels = 
+    df_18$Disposition[order(df_18$avg_res, decreasing = TRUE)])
+
+
+df_18_plt <- plot_ly(df_18, x = df_18$Disposition, y = df_18$avg_res, name = '2018',
+                     marker = list(color = 'rgb(55, 214, 6)',
+                                   line = list(color = 'rgb(8,48,107)',
+                                               width = 1.5)))
+df_19 <- police_2019 %>%
+  filter(!(Disposition == 'None'))%>%
+  group_by(Disposition)%>%
+  dplyr::summarise(avg_res = mean(ResponseTime))%>%
+  head(6)
+ 
+df_19$avg_res <- round(as.numeric(df_19$avg_res/60),2)
+
+df_19$Disposition <- factor(
+  df_19$Disposition, levels = 
+    df_19$Disposition[order(df_19$avg_res, decreasing = TRUE)])
+
+
+df_19_plt <- plot_ly(df_19, x = df_19$Disposition, y = df_19$avg_res, name = '2019',
+                     marker = list(color = 'rgb(55, 55, 200)',
+                                   line = list(color = 'rgb(8,48,107)',
+                                               width = 1.5)))
+df_20 <- police_2020 %>%
+  filter(!(Disposition == '-13'))%>%
+  group_by(Disposition)%>%
+  dplyr::summarise(avg_res = mean(ResponseTime))%>%
+  head(6)
+ 
+df_20$avg_res <- round(as.numeric(df_20$avg_res/60),2)
+
+df_20$Disposition <- factor(
+  df_20$Disposition, levels = 
+    df_20$Disposition[order(df_20$avg_res, decreasing = TRUE)])
+
+
+df_20_plt <- plot_ly(df_20, x = df_20$Disposition, y = df_20$avg_res, name = '2020',
+                     marker = list(color = 'rgb(132, 200, 200)',
+                                   line = list(color = 'rgb(8,48,107)',
+                                               width = 1.5)))
+
+
+df_21 <- police_2021 %>%
+  filter(!(Disposition == 'None'))%>%
+  group_by(Disposition)%>%
+  dplyr::summarise(avg_res = mean(ResponseTime))%>%
+  head(6)
+ 
+df_21$avg_res <- round(as.numeric(df_21$avg_res/60),2)
+
+df_21$Disposition <- factor(
+  df_21$Disposition, levels = 
+    df_21$Disposition[order(df_21$avg_res, decreasing = TRUE)])
+
+
+df_21_plt <- plot_ly(df_21, x = df_21$Disposition, y = df_21$avg_res, name = '2021',
+                     marker = list(color = 'rgb(214, 200, 150)',
+                                   line = list(color = 'rgb(8,48,107)',
+                                               width = 1.5)))
+
+df_22 <- police_2022 %>%
+  filter(!(Disposition == 'None'))%>%
+  group_by(Disposition)%>%
+  dplyr::summarise(avg_res = mean(ResponseTime))%>%
+  head(6)
+ 
+df_22$avg_res <- round(as.numeric(df_22$avg_res/60),2)
+
+df_22$Disposition <- factor(
+  df_22$Disposition, levels = 
+    df_22$Disposition[order(df_22$avg_res, decreasing = TRUE)])
+
+
+df_22_plt <- plot_ly(df_22, x = df_22$Disposition, y = df_22$avg_res, name = '2022',
+                     marker = list(color = 'rgb(214, 55, 200)',
+                                   line = list(color = 'rgb(8,48,107)',
+                                               width = 1.5)))
+
+
+fig <- subplot(df_17_plt, df_18_plt, df_19_plt, df_20_plt, df_21_plt, df_22_plt, nrows = 3)
+
+fig
+
+```
+
+* DUP = Duplicate
+* FAR = False Alarm 
+* GOA = Gone on Arrival 
+* NAT= Necessary Action Taken
+* REF = Referred to External Agency
+* RTF = Report to Follow
+* TRN = Related Incident Disposition
+* TST = Test Incident
+* UNF= Unfounded
+* VOI = Void 
+
+
+```{r, echo = FALSE, message = FALSE, warning= FALSE}
+
+nat_17 <- df_17[df_17$Disposition == 'NAT', ]
+
+nat_18 <- df_18[df_18$Disposition == 'NAT', ]
+
+nat_19 <- df_19[df_19$Disposition == 'NAT', ]
+
+nat_20 <- df_20[df_20$Disposition == 'NAT', ]
+
+nat_21 <- df_21[df_21$Disposition == 'NAT', ]
+
+nat_22 <- df_22[df_22$Disposition == 'NAT', ]
+
+new_df <- rbind(nat_17, nat_18, nat_19, nat_20, nat_21, nat_22)
+
+new_df$Disposition <- c(2017,2018,2019,2020,2021,2022)
+
+fig_res <- plot_ly(new_df, x = ~Disposition, y = ~avg_res, mode = 'lines', line = list(color = 'rgb(2015, 12, 2015)', width = 3)) %>%
+  layout(xaxis = list(title = 'Necessary Action Taken (NAT)'), yaxis = list(title = 'Response Time'))
+
+fig_res
+
+```
+
+
+# Respone Time Increase, Service Calls Decrease
+
+One would assume that an increase in response time would coincide with an increase in service calls - based on the reasonable assumption that an increase in calls would result in a strain on human resources and delays in police action.
+
+However, data shows that the number of service calls decreased over the years. The highest number of service calls made in a single month was in March 2020, with a total of 21,795 calls made.
+
+The lowest number of service calls made in a single month was in September 2022, with a total of 10,543 calls made.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+df_disp <- df%>%
+  group_by(month = lubridate::floor_date(TimeCreate, "month"))%>%
+  dplyr::summarise(n = n())
+
+df_disp_plt <- plot_ly(df_disp, x = ~month, y = ~n, mode = 'lines', line = list(color = 'rgb(205, 12, 24)', width = 3))%>%
+  layout(xaxis = list(title = 'Years'), yaxis = list(title = 'Service Calls'))
+
+
+df_disp_plt
+```
+
+# Service Calls By Season
+
+An interesting way to analyze this data is to categorize service calls according to seasons.
+
+On the whole, service calls are equally spread across all four seasons. More calls are made during Winter and Spring, with the least made in Fall. 
+
+One explanation of this could be shorter days and the assumption that more crime happens at night.
+
+However, this can be easily debunked by the fact that a one percent different exists between Summer (where days are longer) and Spring/Fall.
+
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+season <- quarter(df$TimeDispatch, type = "quarter")
+df['Season'] = season
+df$Season <- gsub("1", "Winter", df$Season)
+df$Season <- gsub("2", "Spring", df$Season)
+df$Season <- gsub("3", "Summer", df$Season)
+df$Season <- gsub("4", "Fall", df$Season)
+
+count <- table(df$Season)
+
+count <- as.data.frame(count)
+
+count$Perc <- round((count$Freq/sum(count$Freq))*100,2)
+
+colors <- c('rgb(211,94,96)', 'rgb(128,133,133)', 'rgb(144,103,167)', 'rgb(171,104,87)', 'rgb(114,147,203)')
+
+
+season_plot <- plot_ly(count, labels= ~Var1, values = ~Perc, type = 'pie',
+                       textposition = 'inside',
+                       textinfo = 'label+percent',
+                       insidetextfont = list(color = '#FFFFFF'),
+                       hoverinfo = 'text',
+                       text = ~Freq,
+                       marker = list(colors = colors,
+                                     line = list(color = '#FFFFFF', width = 1)),
+                       showlegend = FALSE)
+                
+
+season_plot
+
+```
+
+
+# Disposition vs Type
+
+Perhaps the biggest insight of this data set is visualizing the proportions of TextType and Disposition (the caller's complaint and how it was categorized by police).
+
+The data has been filtered to show the top six of each.
+
+When it came to NAT, the most common TypeText was Domestic Disturbance, followed by Complaint Other, Disturbance (Other) and Suspicious Persons.
+
+When people made calls about Suspicious Persons, many did not stay by the time the police officer arrived.
+
+The most follow up calls came from Domestic Disturbances, suggesting that this may be an ongoing issue that isn't being addressed effectively.
+
+```{r, echo = FALSE, warning = FALSE, message= FALSE}
+
+filter_data <- names(sort(table(df$Disposition), decreasing = TRUE)[1:5])
+
+filter_data <- filter(df, df$Disposition %in% filter_data)
+
+typetext <- names(sort(table(filter_data$TypeText), decreasing = TRUE)[1:5])
+
+filter_data <- filter(filter_data, filter_data$TypeText %in% typetext )
+
+p <- ggplot(filter_data, aes(x = Disposition, fill = TypeText)) +
+  geom_bar(position = 'fill')
+
+p <- ggplotly(p)
+
+p
+```
+# Map 
+
+A random sample of calls from the top five zip codes, according to number of calls made, was taken. A number of regex operations were conducted to separate latitude and longitude and the data has been visualized below using leaflet. 
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+
+zip <- names(sort(table(filter_data$Zip), decreasing = TRUE)[1:5])
+
+filter_data <- filter(filter_data, filter_data$Zip %in% zip )
+
+
+```
+
+
+```{r, echo = FALSE, message = FALSE, warning= FALSE}
+
+vec <- c(filter_data$Location)
+gmap <- strcapture("\\(([-0-9.]+)\\s+([-0-9.]+)", vec, proto = list(lon = 1,lat = 1))
+                                                      # proto to define class type
+                                                      # values are arbitrary
+
+filter_data['longitude'] = gmap[1]
+filter_data['latitude'] = gmap[2]
+
+map_data <- filter(filter_data , (filter_data$longitude) < 0 & (filter_data$latitude > 0))
+
+srs <- srswor(500, nrow(map_data))
+
+map_data <- map_data[srs != 0, ]
+
+
+
+
+map <- leaflet() %>% addTiles() %>%  addCircles(lng= map_data$longitude ,
+                                              lat= map_data$latitude)
+
+
+map
+
+```
+
+
+# External Analysis
+
+It was reported earlier this year that NOPD's response time has increased from 51 minutes to two-and-a-half hours over the past three years.
+
+But this analysis proves that there is more nuance to the problem than originally reported. A breakdown of response time according to Disposition time shows that yes, police response time has increased, but in proportion to the Disposition type. It is evident that some cases, labelled as 'Reports To Follow', will elicit a longer response time. 
+
+What must be addressed here is the issue of Necessary Action Taken calls, which have more than doubled over  the past five years.
+
+A reason for this is the NOPD struggling to retain police officers. This is evident also in this analysis, where we see response times increase despite service calls decreasing. 
